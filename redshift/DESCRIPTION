@@ -1,6 +1,6 @@
 Package: redshift
 Title: Utilites for AWS Redshift
-Version: 1.0.0
+Version: 1.0.6
 Authors@R: person("Murat", "Tasan", email = "mur@craftsy.com", role = c("aut", "cre"))
 Description: Utilites for working with AWS Redshift.
 Depends: R (>= 3.3.3), methods

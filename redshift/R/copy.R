@@ -13,6 +13,16 @@ s3copy_format_dates <- function(df) {
 }
 
 
+s3copy_format_numerics <- function(df) {
+    df %>% dplyr::mutate_if(is.numeric, function(x) {
+        na_lix <- is.na(x)
+        RV <- formatC(x, format = "fg")
+        RV[na_lix] <- NA
+        RV
+    })
+}
+
+
 s3copy_execute <- function(redshift_conn,
                            s3_bucket, s3_key, iam_role_arn,
                            schema_name, table_name,
@@ -49,6 +59,7 @@ s3copy_sql_statement <- function(redshift_conn,
         ENCODING UTF8
         IGNOREBLANKLINES
         IGNOREHEADER 1
+        TIMEFORMAT 'auto'
       COMPUPDATE TRUE
       MAXERROR 0
       --NOLOAD --- dry-run
@@ -61,15 +72,19 @@ s3copy_sql_statement <- function(redshift_conn,
 
 copy_table_to_redshift <- function(df, redshift_conn, schema_name, table_name, iam_role_arn,
                                    s3_bucket = "sadlab", s3_key_prefix = "tmp",
-                                   subsecond_digits = 0, with_tz_offset = TRUE, gz = TRUE) {
+                                   subsecond_digits = 6, with_tz_offset = TRUE, gz = TRUE) {
     local_filepath <- if(gz) tempfile(fileext = ".gz") else tempfile()
     s3_key <- glue::glue("{s3_key_prefix}/{uuid::UUIDgenerate()}")
     flog.debug("table -> s3://%s/%s -> redshift/%s/%s", s3_bucket, s3_key, schema_name, table_name)
     df <- df %>%
         s3copy_format_times(subsecond_digits, with_tz_offset) %>%
-        s3copy_format_dates()
+        s3copy_format_dates() %>%
+        s3copy_format_numerics()
     flog.debug(zzz::sstr(df, .name = "table"))
-    s3io::s3io_write(df, s3_bucket, s3_key, readr::write_csv, localfile = local_filepath)
+    orig_scipen <- getOption("scipen")
+    options("scipen" = 1e3)
+    s3io::s3io_write(df, s3_bucket, s3_key, readr::write_csv, na = "", localfile = local_filepath)
+    options("scipen" = orig_scipen)
     do.call(s3copy_execute, tibble::lst(redshift_conn, s3_bucket, s3_key, iam_role_arn, schema_name, table_name, gz))
     awscli::s3api_delete_object(s3_bucket, s3_key)
     return(invisible(NULL))
