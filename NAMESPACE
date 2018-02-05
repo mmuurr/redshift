@@ -1,0 +1,8 @@
+import(futile.logger)
+importFrom(magrittr, `%>%`)
+
+##exportPattern("^[^\\.]")
+
+export(copy_table_to_redshift)
+export(s3copy)
+

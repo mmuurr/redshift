@@ -13,6 +13,7 @@ s3copy_format_dates <- function(df) {
 }
 
 
+
 s3copy_format_numerics <- function(df) {
     df %>% dplyr::mutate_if(is.numeric, function(x) {
         na_lix <- is.na(x)
@@ -73,6 +74,7 @@ s3copy_sql_statement <- function(redshift_conn,
 copy_table_to_redshift <- function(df, redshift_conn, schema_name, table_name, iam_role_arn,
                                    s3_bucket = "sadlab", s3_key_prefix = "tmp",
                                    subsecond_digits = 6, with_tz_offset = TRUE, gz = TRUE) {
+    warning("deprecate! please convert code to use redshift::s3copy instead!", immediate. = TRUE, call. = TRUE)
     local_filepath <- if(gz) tempfile(fileext = ".gz") else tempfile()
     s3_key <- glue::glue("{s3_key_prefix}/{uuid::UUIDgenerate()}")
     flog.debug("table -> s3://%s/%s -> redshift/%s/%s", s3_bucket, s3_key, schema_name, table_name)

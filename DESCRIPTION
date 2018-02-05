@@ -1,6 +1,6 @@
 Package: redshift
 Title: Utilites for AWS Redshift
-Version: 1.0.6
+Version: 1.1.0
 Authors@R: person("Murat", "Tasan", email = "mur@craftsy.com", role = c("aut", "cre"))
 Description: Utilites for working with AWS Redshift.
 Depends: R (>= 3.3.3), methods
@@ -9,3 +9,4 @@ Suggests: DBIplus
 License: file LICENSE
 LazyData: true
 SystemRequirements:
+RoxygenNote: 6.0.1
