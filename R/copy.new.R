@@ -67,7 +67,7 @@ s3copy <- function(df,
                          what = "date") %>%
         dplyr::mutate_if(is.numeric, convert_keep_na, f = format,
                          digits = NULL, scientific = FALSE, trim = TRUE, drop0trailing = TRUE)
-    s3io::s3io_write(df, s3_bucket, s3_key, readr::write_csv, na = "", localfile = local_filepath)
+    s3io::s3io_write(df, s3_bucket, s3_key, readr::write_csv, na = "", .localfile = local_filepath)
     do.call(s3copy_execute, tibble::lst(redshift_conn, s3_bucket, s3_key, iam_role_arn, schema_name, table_name, gz))
     if(s3_delete_on_success) awscli::s3api_delete_object(s3_bucket, s3_key)
     return(invisible(NULL))

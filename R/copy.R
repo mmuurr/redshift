@@ -85,7 +85,7 @@ copy_table_to_redshift <- function(df, redshift_conn, schema_name, table_name, i
     flog.debug(zzz::sstr(df, .name = "table"))
     orig_scipen <- getOption("scipen")
     options("scipen" = 1e3)
-    s3io::s3io_write(df, s3_bucket, s3_key, readr::write_csv, na = "", localfile = local_filepath)
+    s3io::s3io_write(df, s3_bucket, s3_key, readr::write_csv, na = "", .localfile = local_filepath)
     options("scipen" = orig_scipen)
     do.call(s3copy_execute, tibble::lst(redshift_conn, s3_bucket, s3_key, iam_role_arn, schema_name, table_name, gz))
     awscli::s3api_delete_object(s3_bucket, s3_key)
