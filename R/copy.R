@@ -1,93 +1,136 @@
-s3copy_format_times <- function(df, subsecond_digits = 0, with_tz_offset = TRUE) {
-    time_strftime_fmt <- paste0(c("%Y-%m-%dT%H:%M:%OS",
-                                  sprintf("%d", subsecond_digits),
-                                  if(with_tz_offset) "%z" else ""),
-                                collapse = "")
-    df %>% dplyr::mutate_if(lubridate::is.POSIXt, strftime, time_strftime_fmt)
+#' @importFrom magrittr %>%
+NULL
+
+try_silent <- function(expr) {
+  try(expr, silent = TRUE)
 }
 
 
-s3copy_format_dates <- function(df) {
-    date_strftime_fmt <- "%Y-%m-%d"
-    df %>% dplyr::mutate_if(lubridate::is.Date, strftime, date_strftime_fmt)
+format_keep_na <- function(f) {
+  force(f)
+  function(x, ...) {
+    na_lix <- is.na(x)
+    retval <- f(x, ...)
+    retval[na_lix] <- NA  ## type-coercion
+    retval
+  }
 }
 
 
+iso8601 <- function(x,
+                    what = c("datetime", "timestamp", "date", "time"), 
+                    tz = NULL,
+                    tz_offset = TRUE,
+                    digits = 0) {
+  ## "datetime" and "timestamp" are equivalent as far as I'm concerned.
+  ## (A timestamp without the date is simple a "time".)
+  what <- match.arg(what)
+  if (what == "datetime") what <- "timestamp"
 
-s3copy_format_numerics <- function(df) {
-    df %>% dplyr::mutate_if(is.numeric, function(x) {
-        na_lix <- is.na(x)
-        RV <- formatC(x, format = "fg")
-        RV[na_lix] <- NA
-        RV
-    })
+  if (is.null(tz)) tz <- ""
+  checkmate::assert_string(tz, null.ok = TRUE)
+  checkmate::assert_subset(tz, c("", OlsonNames()), empty.ok = FALSE)
+
+  digits <- as.integer(digits)
+  date_pattern <- "%Y-%m-%d"
+  time_pattern <- paste("%H:%M:%OS", digits, sep = "")
+  tz_pattern <- if (tz_offset) "%z" else ""
+
+  strftime_pattern <-
+    if (what == "timestamp") {
+      sprintf("%sT%s%s", date_pattern, time_pattern, tz_pattern)
+    } else if (what == "date") {
+      date_pattern
+    } else if (what == "time") {
+      sprintf("%s%s", time_pattern, tz_pattern)
+    } else {
+      stop(sprintf("unrecognized `what` = %s", what))
+    }
+
+  strftime(x, strftime_pattern, tz = tz, usetz = FALSE)
 }
 
 
-s3copy_execute <- function(redshift_conn,
-                           s3_bucket, s3_key, iam_role_arn,
-                           schema_name, table_name,
-                           gz = FALSE) {
-    copy_statement <- s3copy_sql_statement(redshift_conn, s3_bucket, s3_key, iam_role_arn, schema_name, table_name, gz)
-    flog.debug("executing Redshift COPY statement:\n%s", copy_statement)
-    n_rows_affected <- DBI::dbExecute(redshift_conn, copy_statement)
-    return(invisible(NULL))
+format_datetime <- format_keep_na(function(x, time_tz = NULL, time_tz_offset = TRUE, time_digits = 6) {
+  iso8601(lubridate::as_datetime(x), what = "datetime", tz = time_tz, tz_offset = time_tz_offset, digits = time_digits)
+})
+
+
+format_date <- format_keep_na(function(x) {
+  iso8601(lubridate::as_date(x), what = "date")
+})
+
+
+format_numeric <- format_keep_na(function(x) {
+  format(as.numeric(x), digits = NULL, scientific = FALSE, trim = TRUE, drop0trailing = TRUE)
+})
+
+
+redshift_copy_sql_statement <- function(s3_bucket, s3_key,
+                                        iam_role_arn,
+                                        schema_name, table_name,
+                                        gz = FALSE) {
+  gz <- DBI::SQL(if (isTRUE(gz)) "GZIP" else "")
+  s3_uri <- glue::glue("s3://{s3_bucket}/{s3_key}")
+  glue::glue_sql("
+    COPY {`schema_name`}.{`table_name`}
+    FROM {s3_uri}
+    IAM_ROLE {iam_role_arn}
+    FORMAT CSV
+      {gz}
+      EMPTYASNULL
+      ENCODING UTF8
+      IGNOREBLANKLINES
+      IGNOREHEADER 1
+      TIMEFORMAT 'auto'
+    COMPUPDATE TRUE
+    MAXERROR 0
+    --NOLOAD --- dry-run
+    --STATUPDATE TRUE --- must be table owner to ANALYZE
+  ", .con = DBI::ANSI())
 }
 
 
-s3copy_sql_statement <- function(redshift_conn,
-                                 s3_bucket, s3_key, iam_role_arn,
-                                 schema_name, table_name,
-                                 gz = FALSE) {
-    sql_sprintf_args <- list(
-        dest = if(is.null(schema_name)) {
-                   DBI::dbQuoteIdentifier(redshift_conn, table_name)
-               } else {
-                   sprintf("%s.%s", DBI::dbQuoteIdentifier(redshift_conn, schema_name), DBI::dbQuoteIdentifier(redshift_conn, table_name))
-               }
-       ,s3uri = DBI::dbQuoteString(redshift_conn, sprintf("s3://%s/%s", s3_bucket, s3_key))
-       ,iam = DBI::dbQuoteString(redshift_conn, iam_role_arn)
-       ,gzip = if(gz) "GZIP" else ""
+redshift_exec_copy <- function(redshift_conn,
+                               s3_bucket, s3_key,
+                               iam_role_arn,
+                               schema_name, table_name,
+                               gz = FALSE) {
+  DBI::dbExecute(redshift_conn, redshift_copy_sql_statement(s3_bucket, s3_key, iam_role_arn, schema_name, table_name, gz))
+}
+
+
+#' @export
+s3copy <- function(tbl,
+                   redshift_conn,
+                   schema_name, table_name,
+                   iam_role_arn,
+                   s3_bucket, s3_key, s3_delete_on_success = TRUE,
+                   time_tz = NULL, time_tz_offset = TRUE, time_digits = 6,
+                   gz = TRUE,
+                   .aws_opts = NULL) {
+  gz <- isTRUE(gz)
+  local_filepath <- if (gz) tempfile(fileext = ".gz") else tempfile()
+
+  tbl <- tbl %>%
+    dplyr::mutate(across(where(lubridate::is.POSIXt), format_datetime)) %>%
+    dplyr::mutate(across(where(lubridate::is.Date), format_date)) %>%
+    dplyr::mutate(across(where(is.numeric), format_numeric))
+
+  s3io::s3io_write(tbl, s3_bucket, s3_key, readr::write_csv, na = "", .localfile = local_filepath, .opts = .aws_opts)
+
+  retval <- redshift_exec_copy(redshift_conn, s3_bucket, s3_key, iam_role_arn, schema_name, table_name, gz)
+
+  if (isTRUE(s3_delete_on_success)) {
+    try_silent(
+      awscli2::awscli(
+        c("s3api", "delete-object"),
+        "--bucket" = s3_bucket,
+        "--key" = s3_key,
+        .config = .aws_opts
+      )
     )
+  }
 
-    copy_statement <- with(sql_sprintf_args, glue::glue("
-      COPY {dest}
-      FROM {s3uri}
-      IAM_ROLE {iam}
-      FORMAT CSV
-        {gzip} --- GZIP or nothing
-        EMPTYASNULL
-        ENCODING UTF8
-        IGNOREBLANKLINES
-        IGNOREHEADER 1
-        TIMEFORMAT 'auto'
-      COMPUPDATE TRUE
-      MAXERROR 0
-      --NOLOAD --- dry-run
-      --STATUPDATE TRUE --- must be table owner to ANALYZE
-    ")) %>% stringr::str_trim()
-
-    return(copy_statement)
-}
-
-
-copy_table_to_redshift <- function(df, redshift_conn, schema_name, table_name, iam_role_arn,
-                                   s3_bucket = "sadlab", s3_key_prefix = "tmp",
-                                   subsecond_digits = 6, with_tz_offset = TRUE, gz = TRUE) {
-    warning("deprecate! please convert code to use redshift::s3copy instead!", immediate. = TRUE, call. = TRUE)
-    local_filepath <- if(gz) tempfile(fileext = ".gz") else tempfile()
-    s3_key <- glue::glue("{s3_key_prefix}/{uuid::UUIDgenerate()}")
-    flog.debug("table -> s3://%s/%s -> redshift/%s/%s", s3_bucket, s3_key, schema_name, table_name)
-    df <- df %>%
-        s3copy_format_times(subsecond_digits, with_tz_offset) %>%
-        s3copy_format_dates() %>%
-        s3copy_format_numerics()
-    flog.debug(zzz::sstr(df, .name = "table"))
-    orig_scipen <- getOption("scipen")
-    options("scipen" = 1e3)
-    s3io::s3io_write(df, s3_bucket, s3_key, readr::write_csv, na = "", .localfile = local_filepath)
-    options("scipen" = orig_scipen)
-    do.call(s3copy_execute, tibble::lst(redshift_conn, s3_bucket, s3_key, iam_role_arn, schema_name, table_name, gz))
-    awscli::s3api_delete_object(s3_bucket, s3_key)
-    return(invisible(NULL))
+  retval
 }

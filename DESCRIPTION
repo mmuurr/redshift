@@ -1,12 +1,22 @@
 Package: redshift
 Title: Utilites for AWS Redshift
-Version: 1.1.1
+Version: 2.1.2
 Authors@R: person("Murat", "Tasan", email = "mur@craftsy.com", role = c("aut", "cre"))
 Description: Utilites for working with AWS Redshift.
 Depends: R (>= 3.3.3), methods
-Imports: DBI, magrittr, lubridate, glue, stringr, s3io, awscli, uuid, zzz, futile.logger, dplyr, readr, tibble
-Suggests: DBIplus
+Imports: 
+    awscli2 (>= 0.0.3),
+    checkmate (>= 2.0.0),
+    DBI (>= 1.1.0),
+    dplyr (>= 1.0.9),
+    glue (>= 1.6.2),
+    lubridate (>= 1.7.10),
+    readr (>= 2.1.2),
+    s3io (>= 2.0.0)
 License: file LICENSE
 LazyData: true
 SystemRequirements:
-RoxygenNote: 6.0.1
+RoxygenNote: 7.1.1
+Suggests: 
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
